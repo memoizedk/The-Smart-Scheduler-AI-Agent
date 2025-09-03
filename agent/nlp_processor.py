@@ -11,6 +11,87 @@ class NLPProcessor:
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model_name="gemini-1.5-flash")
 
+    def detect_exit_intent(self, user_input: str) -> bool:
+        """Use Gemini to detect if user wants to end conversation"""
+        prompt = f"""
+        Analyze if the user wants to end the conversation. Return only "true" or "false".
+        
+        User input: "{user_input}"
+        
+        Examples of exit intent: goodbye, thanks that's all, I'm done, see you later, exit, quit, stop, bye
+        """
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text.strip().lower() == "true"
+        except:
+            return False
+
+    def detect_scheduling_intent(self, user_input: str) -> bool:
+        """Use Gemini to detect if user wants to schedule something"""
+        prompt = f"""
+        Analyze if the user wants to schedule a meeting, appointment, or event. Return only "true" or "false".
+        
+        User input: "{user_input}"
+        
+        Examples: schedule a meeting, book appointment, plan a call, set up a meeting, need to meet
+        """
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text.strip().lower() == "true"
+        except:
+            return False
+
+    def parse_time_preferences(self, user_input: str) -> dict:
+        """Use Gemini to intelligently parse time preferences"""
+        prompt = f"""
+        Extract time preferences from user input. Return JSON with:
+        - start_hour (number, 24-hour format)
+        - end_hour (number, 24-hour format)
+        - confidence (0.0-1.0 how confident you are)
+        
+        User input: "{user_input}"
+        Current time: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+        
+        Examples:
+        - "morning" → {{"start_hour": 8, "end_hour": 12, "confidence": 0.9}}
+        - "late afternoon" → {{"start_hour": 15, "end_hour": 18, "confidence": 0.8}}
+        - "early evening" → {{"start_hour": 17, "end_hour": 20, "confidence": 0.8}}
+        - "lunch time" → {{"start_hour": 11, "end_hour": 14, "confidence": 0.9}}
+        
+        If no time preference found, return null for start_hour and end_hour.
+        """
+        try:
+            response = self.model.generate_content(prompt)
+            content = response.text.strip()
+            cleaned = re.sub(r"^```json|```$", "", content, flags=re.MULTILINE).strip()
+            return json.loads(cleaned)
+        except:
+            return {"start_hour": None, "end_hour": None, "confidence": 0.0}
+
+    def extract_working_hours_preference(self, user_input: str) -> dict:
+        """Extract user's preferred working hours"""
+        prompt = f"""
+        Extract the user's working hours preference. Return JSON with:
+        - work_start_hour (number, 24-hour format)
+        - work_end_hour (number, 24-hour format)
+        - timezone (string, if mentioned)
+        
+        User input: "{user_input}"
+        
+        Examples:
+        - "I work 9 to 5" → {{"work_start_hour": 9, "work_end_hour": 17}}
+        - "my hours are 8am to 6pm" → {{"work_start_hour": 8, "work_end_hour": 18}}
+        - "I'm available from 10 to 4" → {{"work_start_hour": 10, "work_end_hour": 16}}
+        
+        If no working hours mentioned, return null values.
+        """
+        try:
+            response = self.model.generate_content(prompt)
+            content = response.text.strip()
+            cleaned = re.sub(r"^```json|```$", "", content, flags=re.MULTILINE).strip()
+            return json.loads(cleaned)
+        except:
+            return {"work_start_hour": None, "work_end_hour": None, "timezone": None}
 
     def extract_meeting_info(self, user_input: str, context: dict) -> dict:
         system_prompt = """You are a smart assistant that extracts meeting info from natural language. 

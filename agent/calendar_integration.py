@@ -82,14 +82,11 @@ class AdvancedCalendarManager:
     
     def find_optimal_slots(self, target_date: datetime.date, duration_minutes: int,
                           preferred_time_range: Optional[Tuple[int, int]] = None,
-                          max_slots: int = 5) -> List[TimeSlot]:
+                          max_slots: int = 5, user_work_hours: Tuple[int, int] = (9, 17)) -> List[TimeSlot]:
         """Find optimal meeting slots with confidence scoring"""
         
-        # Default working hours
-        work_start = 9  # 9 AM
-        work_end = 17   # 5 PM
-        
-       
+        # Use provided user work hours or defaults
+        work_start, work_end = user_work_hours
         
         # Get existing events
         events = self.get_events_for_date_range(target_date, target_date)
@@ -100,18 +97,18 @@ class AdvancedCalendarManager:
         if preferred_time_range:
             try:
                 if isinstance(preferred_time_range, dict):
-                    work_start = float(preferred_time_range.get("start_hour", 9))
-                    work_end = float(preferred_time_range.get("end_hour", 17))
+                    work_start = float(preferred_time_range.get("start_hour", work_start))
+                    work_end = float(preferred_time_range.get("end_hour", work_end))
                 elif isinstance(preferred_time_range, tuple):
                     work_start, work_end = map(float, preferred_time_range)
                 else:
-                    work_start, work_end = 9, 17
+                    work_start, work_end = user_work_hours
 
             except Exception as e:
                 print("⚠️ Failed to parse preferred_time_range:", e)
-                work_start, work_end = 9, 17
+                work_start, work_end = user_work_hours
         else:
-            work_start, work_end = 9, 17
+            work_start, work_end = user_work_hours
 
         start_hour = int(work_start)
         start_minute = int((work_start - start_hour) * 60)

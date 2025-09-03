@@ -43,7 +43,13 @@ class SmartSchedulerAgent:
 
         self.last_suggested_slots = []
         self.last_duration = None
-
+        
+        # User preferences (learned dynamically)
+        self.user_preferences = {
+            "work_start_hour": 9,  # Default, can be updated
+            "work_end_hour": 17,   # Default, can be updated
+            "timezone": timezone
+        }
         
         # Conversation state
         self.state = ConversationState.GREETING
@@ -54,6 +60,19 @@ class SmartSchedulerAgent:
         # Configuration
         self.max_retries = 3
         self.current_retries = 0
+
+    def update_user_preferences(self, user_input: str):
+        """Update user preferences based on their input"""
+        working_hours = self.nlp.extract_working_hours_preference(user_input)
+        
+        if working_hours.get("work_start_hour"):
+            self.user_preferences["work_start_hour"] = working_hours["work_start_hour"]
+            
+        if working_hours.get("work_end_hour"):
+            self.user_preferences["work_end_hour"] = working_hours["work_end_hour"]
+            
+        if working_hours.get("timezone"):
+            self.user_preferences["timezone"] = working_hours["timezone"]
     
     def extract_date(self, user_input: str):
         """Extract a date from user text using simple parsing"""
@@ -75,8 +94,8 @@ class SmartSchedulerAgent:
                     self.handle_speech_error()
                     continue
                 
-                # Handle exit commands
-                if any(exit_word in user_input for exit_word in ["goodbye", "thanks","exit", "quit", "stop"]):
+                # Handle exit commands using intelligent detection
+                if self.nlp.detect_exit_intent(user_input):
                     self.voice.speak("Goodbye! Have a great day!")
                     break
 
@@ -149,21 +168,27 @@ class SmartSchedulerAgent:
         ]):
             date = self.nlp.extract_date(user_input)
             if date:
-                if "evening" in user_input.lower():
-                    preferred_range = {"start_hour": 17, "end_hour": 21}
-                elif "morning" in user_input.lower():
-                    preferred_range = {"start_hour": 8, "end_hour": 12}
-                elif "afternoon" in user_input.lower():
-                    preferred_range = {"start_hour": 12, "end_hour": 17}
+                # Use intelligent time preference parsing
+                time_prefs = self.nlp.parse_time_preferences(user_input)
+                
+                if time_prefs.get("start_hour") and time_prefs.get("end_hour"):
+                    preferred_range = {
+                        "start_hour": time_prefs["start_hour"], 
+                        "end_hour": time_prefs["end_hour"]
+                    }
                 else:
-                    # Default to full workday
-                    preferred_range = {"start_hour": 9, "end_hour": 17}
+                    # Default to user's working hours
+                    preferred_range = {
+                        "start_hour": self.user_preferences["work_start_hour"], 
+                        "end_hour": self.user_preferences["work_end_hour"]
+                    }
 
                 free_slots = self.calendar_manager.find_optimal_slots(
                     target_date=date,
                     duration_minutes=30,
                     preferred_time_range=preferred_range,
-                    max_slots=5
+                    max_slots=5,
+                    user_work_hours=(self.user_preferences["work_start_hour"], self.user_preferences["work_end_hour"])
                 )
 
                 if free_slots:
@@ -193,9 +218,11 @@ class SmartSchedulerAgent:
     
     def handle_greeting(self, user_input: str) -> str:
         """Handle initial greeting and meeting request detection"""
-        meeting_keywords = ['schedule', 'meeting', 'book', 'plan', 'appointment', 'call']
+        # Update user preferences if mentioned
+        self.update_user_preferences(user_input)
         
-        if any(keyword in user_input.lower() for keyword in meeting_keywords):
+        # Use intelligent scheduling intent detection
+        if self.nlp.detect_scheduling_intent(user_input):
             if self.meeting_request.duration_minutes:
                 self.state = ConversationState.COLLECTING_TIME_PREFERENCE
                 return f"Great! I see you want to schedule a {self.meeting_request.duration_minutes}-minute meeting. When would you like to meet?"
@@ -223,12 +250,24 @@ class SmartSchedulerAgent:
             else:
                 return "I didn't understand the date. Could you try again? For example, 'tomorrow afternoon', 'next Tuesday', or 'this Friday morning'."
 
+        # Use intelligent time preference parsing
+        time_prefs = self.nlp.parse_time_preferences(user_input)
+        if time_prefs.get("start_hour") and time_prefs.get("end_hour"):
+            self.meeting_request.time_range = (time_prefs["start_hour"], time_prefs["end_hour"])
+        elif not self.meeting_request.time_range:
+            # Use user's default working hours
+            self.meeting_request.time_range = (
+                self.user_preferences["work_start_hour"], 
+                self.user_preferences["work_end_hour"]
+            )
+
         # Find available slots
         slots = self.calendar_manager.find_optimal_slots(
             target_date=self.meeting_request.preferred_date,
             duration_minutes=self.meeting_request.duration_minutes,
             preferred_time_range=self.meeting_request.time_range,
-            max_slots=5
+            max_slots=5,
+            user_work_hours=(self.user_preferences["work_start_hour"], self.user_preferences["work_end_hour"])
         )
 
         if not slots:
@@ -253,7 +292,8 @@ class SmartSchedulerAgent:
             self.meeting_request.preferred_date,
             self.meeting_request.duration_minutes,
             self.meeting_request.time_range,
-            max_slots=5
+            max_slots=5,
+            user_work_hours=(self.user_preferences["work_start_hour"], self.user_preferences["work_end_hour"])
         )
 
         if slots:
