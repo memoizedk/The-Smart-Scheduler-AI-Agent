@@ -12,7 +12,10 @@ from datetime import datetime, date
 # Import your existing components
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Add parent directory to Python path to import from the agent module
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
 
 from agent.nlp_processor import NLPProcessor
 from agent.calendar_integration import AdvancedCalendarManager
@@ -69,16 +72,30 @@ async def startup_event():
     global nlp_processor, calendar_manager
     
     # Initialize NLP processor
-    nlp_processor = NLPProcessor(api_key=settings.GEMINI_API_KEY)
+    try:
+        nlp_processor = NLPProcessor(api_key=settings.GEMINI_API_KEY)
+        print("✅ Gemini NLP processor initialized")
+    except Exception as e:
+        print(f"❌ Failed to initialize NLP processor: {e}")
+        nlp_processor = None
     
     # Initialize calendar service
-    google_service = authenticate_google_calendar(
-        credentials_path=settings.GOOGLE_CALENDAR_CREDENTIALS_PATH
-    )
-    calendar_manager = AdvancedCalendarManager(
-        google_service, 
-        timezone=settings.DEFAULT_TIMEZONE
-    )
+    try:
+        if settings.GOOGLE_CALENDAR_CREDENTIALS_PATH:
+            google_service = authenticate_google_calendar(
+                credentials_path=settings.GOOGLE_CALENDAR_CREDENTIALS_PATH
+            )
+            calendar_manager = AdvancedCalendarManager(
+                google_service, 
+                timezone=settings.DEFAULT_TIMEZONE
+            )
+            print("✅ Google Calendar integration initialized")
+        else:
+            print("⚠️ Google Calendar credentials not found. Calendar features disabled.")
+            calendar_manager = None
+    except Exception as e:
+        print(f"❌ Failed to initialize calendar: {e}")
+        calendar_manager = None
 
 @app.get("/")
 async def root():
@@ -172,6 +189,10 @@ async def speech_to_text(audio_data: bytes) -> str:
 async def process_user_message(message: str, session: Dict) -> tuple:
     """Process user message and return response, new state, and action data"""
     
+    # Check if NLP processor is available
+    if not nlp_processor:
+        return "Sorry, the AI service is not available right now.", "error", {}
+    
     # Extract information using NLP
     context = {
         "current_state": session["conversation_state"],
@@ -204,11 +225,14 @@ async def process_user_message(message: str, session: Dict) -> tuple:
         else:
             return "I'd be happy to help you schedule a meeting! How long should it be?", "collecting_duration", {}
     
-    # Handle availability check
+    # Handle availability check (only if calendar is available)
     if any(phrase in message.lower() for phrase in [
         "do i have", "what's on", "am i busy", "am i free", "am i available"
     ]):
-        return await handle_availability_check(message, session)
+        if calendar_manager:
+            return await handle_availability_check(message, session)
+        else:
+            return "Sorry, calendar integration is not available right now.", "greeting", {}
     
     # Handle based on current state
     if current_state == "collecting_duration":
@@ -219,9 +243,12 @@ async def process_user_message(message: str, session: Dict) -> tuple:
             return "I didn't catch the duration. Could you tell me how long the meeting should be?", "collecting_duration", {}
     
     elif current_state == "collecting_time_preference":
-        return await handle_time_preference_collection(message, session, extracted_info)
+        if calendar_manager:
+            return await handle_time_preference_collection(message, session, extracted_info)
+        else:
+            return "Sorry, calendar integration is not available for scheduling.", "greeting", {}
     
-    return "I can help you schedule meetings or check your availability. What would you like to do?", "greeting", {}
+    return "I can help you with general questions. Calendar features require proper setup of Google Calendar credentials.", "greeting", {}
 
 async def handle_availability_check(message: str, session: Dict) -> tuple:
     """Handle availability check requests"""
